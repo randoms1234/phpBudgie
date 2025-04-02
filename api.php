@@ -11,25 +11,10 @@ if (!$link) {
     exit;
 }
 
-// Define a function to fetch all users
-function getAllUsers($link) {
-    $query = "SELECT * FROM users";
-    $result = mysqli_query($link, $query);
-    if ($result) {
-        $users = [];
-        while ($row = mysqli_fetch_assoc($result)) {
-            $users[] = $row;
-        }
-        return $users;
-    } else {
-        return false; // Query error
-    }
-}
-
-// Define a function to fetch user details by username
-function getUserByUsername($link, $username) {
-    // Prevent SQL injection by using prepared statements
-    $query = "SELECT * FROM users WHERE username = ?";
+// Define a function to verify username and password, and return user info if valid
+function getUserByCredentials($link, $username, $password) {
+    // Use a prepared statement to select the user by username
+    $query = "SELECT username, password, Name, balance, budget FROM users WHERE username = ?";
     $stmt = mysqli_prepare($link, $query);
 
     if ($stmt) {
@@ -38,9 +23,18 @@ function getUserByUsername($link, $username) {
         $result = mysqli_stmt_get_result($stmt);
 
         if ($result && mysqli_num_rows($result) > 0) {
-            return mysqli_fetch_assoc($result); // Fetch the user row as an associative array
+            $user = mysqli_fetch_assoc($result);
+
+            // Verify the provided password with the hashed password in the database
+            if (password_verify($password, $user['password'])) {
+                // Remove the hashed password before returning the data
+                unset($user['password']);
+                return $user; // Return the user details
+            } else {
+                return null; // Password does not match
+            }
         } else {
-            return null; // No user found
+            return null; // Username not found
         }
     } else {
         return false; // Query preparation error
@@ -70,43 +64,77 @@ function addUser($link, $username, $password, $name, $balance, $budget) {
     }
 }
 
+// Define a function to update the user's current balance
+function updateUserBalance($link, $username, $balance) {
+    // Use a prepared statement to prevent SQL injection
+    $query = "UPDATE users SET balance = ? WHERE username = ?";
+    $stmt = mysqli_prepare($link, $query);
+
+    if ($stmt) {
+        mysqli_stmt_bind_param($stmt, "ds", $balance, $username);
+
+        // Execute the prepared statement
+        if (mysqli_stmt_execute($stmt)) {
+            return true; // Update successful
+        } else {
+            return false; // Update failed
+        }
+    } else {
+        return false; // Query preparation error
+    }
+}
+
 // Handle requests based on the method and input
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    // Fetch user by username if provided, otherwise fetch all users
-    if (isset($_GET['username'])) {
+    // Fetch user by username and password
+    if (isset($_GET['username'], $_GET['password'])) {
         $username = $_GET['username'];
-        $user = getUserByUsername($link, $username);
+        $password = $_GET['password'];
+
+        // Call the function to verify credentials and fetch user info
+        $user = getUserByCredentials($link, $username, $password);
 
         if ($user === false) {
             http_response_code(500);
             echo json_encode(['error' => 'Failed to execute query.']);
         } elseif ($user === null) {
-            http_response_code(404);
-            echo json_encode(['error' => 'User not found.']);
+            http_response_code(401); // Unauthorized
+            echo json_encode(['error' => 'Invalid username or password.']);
         } else {
             http_response_code(200);
             echo json_encode($user);
         }
     } else {
-        // If no username is provided, return all users as a fallback
-        $users = getAllUsers($link);
-        if ($users === false) {
-            http_response_code(500);
-            echo json_encode(['error' => 'Failed to execute query.']);
-        } else {
-            http_response_code(200);
-            echo json_encode($users);
-        }
+        http_response_code(400);
+        echo json_encode(['error' => 'Username and password are required.']);
     }
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Add a new user
     $data = json_decode(file_get_contents('php://input'), true);
 
-    // Validate the input fields
-    if (
+    if (isset($data['action']) == 'updateBalance') {
+        // Update balance logic
+        if (isset($data['username'], $data['balance']) && !empty($data['username'])) {
+            $username = $data['username'];
+            $balance = (float)$data['balance']; // Convert to float
+
+            $success = updateUserBalance($link, $username, $balance);
+
+            if ($success) {
+                http_response_code(200);
+                echo json_encode(['message' => 'Balance updated successfully.']);
+            } else {
+                http_response_code(500);
+                echo json_encode(['error' => 'Failed to update balance.']);
+            }
+        } else {
+            http_response_code(400);
+            echo json_encode(['error' => 'Invalid input. Username and balance are required.']);
+        }
+    } elseif (
         isset($data['username'], $data['password'], $data['name'], $data['balance'], $data['budget']) &&
         !empty($data['username']) && !empty($data['password']) && !empty($data['name'])
     ) {
+        // Add new user logic
         $username = $data['username'];
         $password = $data['password'];
         $name = $data['name'];
