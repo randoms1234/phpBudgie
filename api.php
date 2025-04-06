@@ -14,17 +14,14 @@ if (!$link) {
 // Define a function to verify username and password, and return user info if valid
 function getUserByCredentials($link, $username, $password) {
     // Use a prepared statement to select the user by username
-    $query = "SELECT username, password, Name, balance, budget FROM users WHERE username = ?";
+    $query = "SELECT username, password, Name, balance, budget, spent FROM users WHERE username = ?";
     $stmt = mysqli_prepare($link, $query);
-
     if ($stmt) {
         mysqli_stmt_bind_param($stmt, "s", $username); // "s" specifies the type as string
         mysqli_stmt_execute($stmt);
         $result = mysqli_stmt_get_result($stmt);
-
         if ($result && mysqli_num_rows($result) > 0) {
             $user = mysqli_fetch_assoc($result);
-
             // Verify the provided password with the hashed password in the database
             if (password_verify($password, $user['password'])) {
                 // Remove the hashed password before returning the data
@@ -45,14 +42,11 @@ function getUserByCredentials($link, $username, $password) {
 function addUser($link, $username, $password, $name, $balance, $budget) {
     // Hash the password for security
     $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
-
     // Use a prepared statement to prevent SQL injection
     $query = "INSERT INTO users (username, password, Name, balance, budget) VALUES (?, ?, ?, ?, ?)";
     $stmt = mysqli_prepare($link, $query);
-
     if ($stmt) {
         mysqli_stmt_bind_param($stmt, "sssdd", $username, $hashedPassword, $name, $balance, $budget);
-
         // Execute the prepared statement
         if (mysqli_stmt_execute($stmt)) {
             return true; // Insertion successful
@@ -66,13 +60,54 @@ function addUser($link, $username, $password, $name, $balance, $budget) {
 
 // Define a function to update the user's current balance
 function updateUserBalance($link, $username, $balance) {
-    // Use a prepared statement to prevent SQL injection
-    $query = "UPDATE users SET balance = ? WHERE username = ?";
+    // Start by fetching the current balance
+    $query = "SELECT balance, spent FROM users WHERE username = ?";
     $stmt = mysqli_prepare($link, $query);
-
     if ($stmt) {
-        mysqli_stmt_bind_param($stmt, "ds", $balance, $username);
+        mysqli_stmt_bind_param($stmt, "s", $username);
+        mysqli_stmt_execute($stmt);
+        $result = mysqli_stmt_get_result($stmt);
+        if ($result && ($row = mysqli_fetch_assoc($result))) {
+            $currentBalance = $row['balance']; // Current balance in the database
+            $spent = $row['spent']; // Current spent amount
 
+            // Calculate the difference in balance
+            $difference = $currentBalance - $balance;
+
+            // Update the spent field if the balance decreases
+            if ($difference > 0) {
+                $spent += $difference; // Add the spent amount
+            }
+
+            // Update the balance and spent fields in one query
+            $updateQuery = "UPDATE users SET balance = ?, spent = ? WHERE username = ?";
+            $updateStmt = mysqli_prepare($link, $updateQuery);
+            if ($updateStmt) {
+                mysqli_stmt_bind_param($updateStmt, "dds", $balance, $spent, $username);
+                // Execute the prepared statement
+                if (mysqli_stmt_execute($updateStmt)) {
+                    return true; // Update successful
+                } else {
+                    return false; // Update failed
+                }
+            } else {
+                return false; // Query preparation for update failed
+            }
+        } else {
+            return false; // Failed to fetch user data
+        }
+    } else {
+        return false; // Query preparation failed
+    }
+}
+
+// Define a function to update the user's budget
+function updateUserBudget($link, $username, $budget) {
+    // Use a prepared statement to prevent SQL injection
+    $query = "UPDATE users SET budget = ? WHERE username = ?";
+    $stmt = mysqli_prepare($link, $query);
+    if ($stmt) {
+        mysqli_stmt_bind_param($stmt, "ds", $budget, $username);
         // Execute the prepared statement
         if (mysqli_stmt_execute($stmt)) {
             return true; // Update successful
@@ -90,10 +125,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     if (isset($_GET['username'], $_GET['password'])) {
         $username = $_GET['username'];
         $password = $_GET['password'];
-
         // Call the function to verify credentials and fetch user info
         $user = getUserByCredentials($link, $username, $password);
-
         if ($user === false) {
             http_response_code(500);
             echo json_encode(['error' => 'Failed to execute query.']);
@@ -110,25 +143,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     }
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $data = json_decode(file_get_contents('php://input'), true);
-
-    if (isset($data['action']) == 'updateBalance') {
-        // Update balance logic
-        if (isset($data['username'], $data['balance']) && !empty($data['username'])) {
-            $username = $data['username'];
-            $balance = (float)$data['balance']; // Convert to float
-
-            $success = updateUserBalance($link, $username, $balance);
-
-            if ($success) {
-                http_response_code(200);
-                echo json_encode(['message' => 'Balance updated successfully.']);
+    if (isset($data['action'])) {
+        if ($data['action'] === 'updateBalance') {
+            // Update balance logic
+            if (isset($data['username'], $data['balance']) && !empty($data['username'])) {
+                $username = $data['username'];
+                $balance = (float)$data['balance']; // Convert to float
+                $success = updateUserBalance($link, $username, $balance);
+                if ($success) {
+                    http_response_code(200);
+                    echo json_encode(['message' => 'Balance updated successfully.']);
+                } else {
+                    http_response_code(500);
+                    echo json_encode(['error' => 'Failed to update balance.']);
+                }
             } else {
-                http_response_code(500);
-                echo json_encode(['error' => 'Failed to update balance.']);
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid input. Username and balance are required.']);
             }
-        } else {
-            http_response_code(400);
-            echo json_encode(['error' => 'Invalid input. Username and balance are required.']);
+        } elseif ($data['action'] === 'updateBudget') {
+            // Update budget logic
+            if (isset($data['username'], $data['budget']) && !empty($data['username'])) {
+                $username = $data['username'];
+                $budget = (float)$data['budget']; // Convert to float
+                $success = updateUserBudget($link, $username, $budget);
+                if ($success) {
+                    http_response_code(200);
+                    echo json_encode(['message' => 'Budget updated successfully.']);
+                } else {
+                    http_response_code(500);
+                    echo json_encode(['error' => 'Failed to update budget.']);
+                }
+            } else {
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid input. Username and budget are required.']);
+            }
         }
     } elseif (
         isset($data['username'], $data['password'], $data['name'], $data['balance'], $data['budget']) &&
@@ -140,10 +189,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $name = $data['name'];
         $balance = (float)$data['balance']; // Convert to float
         $budget = (float)$data['budget']; // Convert to float
-
         // Call the function to add a user
         $success = addUser($link, $username, $password, $name, $balance, $budget);
-
         if ($success) {
             http_response_code(201);
             echo json_encode(['message' => 'User added successfully.']);
