@@ -14,7 +14,7 @@ if (!$link) {
 // Define a function to verify username and password, and return user info if valid
 function getUserByCredentials($link, $username, $password) {
     // Use a prepared statement to select the user by username
-    $query = "SELECT username, password, Name, balance, budget, spent FROM users WHERE username = ?";
+    $query = "SELECT username, password, Name, balance, budget, spent, tot_income FROM users WHERE username = ?";
     $stmt = mysqli_prepare($link, $query);
     if ($stmt) {
         mysqli_stmt_bind_param($stmt, "s", $username); // "s" specifies the type as string
@@ -40,50 +40,83 @@ function getUserByCredentials($link, $username, $password) {
 
 // Define a function to add a new user
 function addUser($link, $username, $password, $name, $balance, $budget) {
-    // Hash the password for security
+    // Step 1: Check if the username already exists
+    $checkQuery = "SELECT username FROM users WHERE username = ?";
+    $checkStmt = mysqli_prepare($link, $checkQuery);
+    if ($checkStmt) {
+        mysqli_stmt_bind_param($checkStmt, "s", $username);
+        mysqli_stmt_execute($checkStmt);
+        $checkResult = mysqli_stmt_get_result($checkStmt);
+
+        if ($checkResult && mysqli_num_rows($checkResult) > 0) {
+            // Username already exists
+            return [
+                'success' => false,
+                'error' => 'An account with this username already exists.'
+            ];
+        }
+        mysqli_stmt_close($checkStmt);
+    } else {
+        // Query preparation error
+        return [
+            'success' => false,
+            'error' => 'Failed to check for duplicate username.'
+        ];
+    }
+
+    // Step 2: Proceed to add user if username does not exist
     $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
-    // Use a prepared statement to prevent SQL injection
     $query = "INSERT INTO users (username, password, Name, balance, budget) VALUES (?, ?, ?, ?, ?)";
     $stmt = mysqli_prepare($link, $query);
     if ($stmt) {
         mysqli_stmt_bind_param($stmt, "sssdd", $username, $hashedPassword, $name, $balance, $budget);
-        // Execute the prepared statement
         if (mysqli_stmt_execute($stmt)) {
-            return true; // Insertion successful
+            return ['success' => true]; // Insertion successful
         } else {
-            return false; // Insertion failed
+            return [
+                'success' => false,
+                'error' => 'Failed to insert the new user account.'
+            ];
         }
     } else {
-        return false; // Query preparation error
+        return [
+            'success' => false,
+            'error' => 'Failed to prepare user insertion query.'
+        ];
     }
 }
 
 // Define a function to update the user's current balance
 function updateUserBalance($link, $username, $balance) {
     // Start by fetching the current balance
-    $query = "SELECT balance, spent FROM users WHERE username = ?";
+    $query = "SELECT balance, spent, tot_income FROM users WHERE username = ?";
     $stmt = mysqli_prepare($link, $query);
     if ($stmt) {
         mysqli_stmt_bind_param($stmt, "s", $username);
         mysqli_stmt_execute($stmt);
         $result = mysqli_stmt_get_result($stmt);
+
         if ($result && ($row = mysqli_fetch_assoc($result))) {
             $currentBalance = $row['balance']; // Current balance in the database
-            $spent = $row['spent']; // Current spent amount
+            $spent = $row['spent'];           // Current spent amount
+            $totIncome = $row['tot_income'];  // Current total income
 
             // Calculate the difference in balance
-            $difference = $currentBalance - $balance;
+            $difference = $balance - $currentBalance;
 
-            // Update the spent field if the balance decreases
+            // If the balance increases, it means there's new income
             if ($difference > 0) {
-                $spent += $difference; // Add the spent amount
+                $totIncome += $difference; // Add the income difference to tot_income
+            } else if ($difference < 0) {
+                // If balance decreases, update spent
+                $spent += abs($difference); // Add the spent amount
             }
 
-            // Update the balance and spent fields in one query
-            $updateQuery = "UPDATE users SET balance = ?, spent = ? WHERE username = ?";
+            // Update the balance, spent, and total income fields in one query
+            $updateQuery = "UPDATE users SET balance = ?, spent = ?, tot_income = ? WHERE username = ?";
             $updateStmt = mysqli_prepare($link, $updateQuery);
             if ($updateStmt) {
-                mysqli_stmt_bind_param($updateStmt, "dds", $balance, $spent, $username);
+                mysqli_stmt_bind_param($updateStmt, "ddds", $balance, $spent, $totIncome, $username);
                 // Execute the prepared statement
                 if (mysqli_stmt_execute($updateStmt)) {
                     return true; // Update successful
@@ -190,8 +223,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $balance = (float)$data['balance']; // Convert to float
         $budget = (float)$data['budget']; // Convert to float
         // Call the function to add a user
-        $success = addUser($link, $username, $password, $name, $balance, $budget);
-        if ($success) {
+        $result = addUser($link, $username, $password, $name, $balance, $budget);
+        if ($result['success']) {
             http_response_code(201);
             echo json_encode(['message' => 'User added successfully.']);
         } else {
