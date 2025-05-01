@@ -2,7 +2,7 @@
 header('Content-Type: application/json');
 // Include database configuration
 global $link;
-require 'config.php'; // Assuming this file contains your database connection setup
+require 'config.php';
 
 // Ensure the database connection exists
 if (!$link) {
@@ -13,11 +13,10 @@ if (!$link) {
 
 // Define a function to verify username and password, and return user info if valid
 function getUserByCredentials($link, $username, $password) {
-    // Use a prepared statement to select the user by username
     $query = "SELECT username, password, Name, balance, budget, spent, tot_income FROM users WHERE username = ?";
     $stmt = mysqli_prepare($link, $query);
     if ($stmt) {
-        mysqli_stmt_bind_param($stmt, "s", $username); // "s" specifies the type as string
+        mysqli_stmt_bind_param($stmt, "s", $username);
         mysqli_stmt_execute($stmt);
         $result = mysqli_stmt_get_result($stmt);
         if ($result && mysqli_num_rows($result) > 0) {
@@ -86,9 +85,7 @@ function addUser($link, $username, $password, $name, $balance, $budget) {
     }
 }
 
-// Define a function to update the user's current balance
 function updateUserBalance($link, $username, $balance) {
-    // Start by fetching the current balance
     $query = "SELECT balance, spent, tot_income FROM users WHERE username = ?";
     $stmt = mysqli_prepare($link, $query);
     if ($stmt) {
@@ -164,7 +161,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             http_response_code(500);
             echo json_encode(['error' => 'Failed to execute query.']);
         } elseif ($user === null) {
-            http_response_code(401); // Unauthorized
+            http_response_code(401);
             echo json_encode(['error' => 'Invalid username or password.']);
         } else {
             http_response_code(200);
@@ -240,4 +237,3 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed.']);
 }
-?>
